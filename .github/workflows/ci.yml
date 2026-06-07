@@ -1,0 +1,33 @@
+name: CI
+
+# Run the test suite and type-check on every push to main and every PR.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel an in-progress run when new commits are pushed to the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true            # cache the uv cache, keyed on uv.lock
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run tests
+        run: uv run pytest -q
+
+      - name: Type-check
+        run: uv run --with pyright pyright src tests
