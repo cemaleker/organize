@@ -1,5 +1,8 @@
 # Inbox Cleaner
 
+[![Tests](https://github.com/cemaleker/organize/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/cemaleker/organize/actions/workflows/ci.yml)
+[![Build](https://github.com/cemaleker/organize/actions/workflows/release.yml/badge.svg)](https://github.com/cemaleker/organize/actions/workflows/release.yml)
+
 A CLI/TUI tool to **fetch, index, group, filter, and clean** a neglected Gmail
 inbox **safely**.
 
