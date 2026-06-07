@@ -1,0 +1,14 @@
+# Normalize line endings: store and check out text files with LF everywhere,
+# regardless of each contributor's core.autocrlf setting. Silences the
+# "LF will be replaced by CRLF" warnings on Windows.
+* text=auto eol=lf
+
+# Treat common binary types as binary (never convert).
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.sqlite binary
+*.db binary
+*.lock binary
