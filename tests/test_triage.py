@@ -159,6 +159,39 @@ async def test_plan_then_execute_archives_and_clears(tmp_path):
         assert "1 filters created" in app.last_status
 
 
+async def test_execute_keeps_cursor_on_surviving_selected_sender(tmp_path):
+    # Regression: with sender "mid" selected, executing actions on senders ranked
+    # above it drops those rows so "mid" shifts up. The cursor must follow "mid",
+    # not stay at its old row index (which now points at a different sender).
+    db = tmp_path / "t.sqlite"
+    # unread count drives newsletter ranking, so order is top > mid > bottom.
+    _seed_store(db, "top.com", ["t1", "t2", "t3"], from_addr="n@top.com")
+    _seed_store(db, "mid.com", ["m1", "m2"], from_addr="n@mid.com")
+    _seed_store(db, "bot.com", ["b1"], from_addr="n@bot.com")
+    svc = FakeService(pages={}, messages_by_id={}, profile={})
+    app = TriageApp(Config(db_path=db), service=svc)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        await pilot.pause()
+        table = app.query_one("#senders", DataTable)
+        assert [r[1] for r in app._rows] == ["top.com", "mid.com", "bot.com"]
+
+        table.move_cursor(row=0)  # plan the *top* sender (the one above "mid")
+        await pilot.pause()
+        app.action_plan("archive")
+        table.move_cursor(row=1)  # selection ends on the untouched "mid.com"
+        await pilot.pause()
+        assert app._rows[table.cursor_row][1] == "mid.com"
+
+        app.action_execute()
+        await _settle(app, pilot)
+        await pilot.pause()
+
+        # "top.com" is gone, "mid.com" moved up — cursor stays on "mid.com".
+        assert [r[1] for r in app._rows] == ["mid.com", "bot.com"]
+        assert app._rows[table.cursor_row][1] == "mid.com"
+
+
 async def test_label_prompt_enter_submits_not_execute(tmp_path):
     # Regression: Enter in the label modal must submit the label, not trigger
     # the app's priority 'execute' binding. (check_action suppresses execute
