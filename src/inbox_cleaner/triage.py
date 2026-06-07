@@ -314,8 +314,13 @@ class TriageApp(App):
     # -- UI-thread updates ---------------------------------------------------
 
     def _set_rows(self, rows: list[tuple]) -> None:
+        # Remember which sender was highlighted so a refresh that drops rows
+        # (execute/sync/undo) keeps the cursor on the *same* sender rather than
+        # whatever now sits at the old row index.
+        prev = self._current_row()
+        prev_key = prev[1] if prev is not None else None
         self._rows = triage_view(rows, self.limit)
-        self._render_senders()
+        self._render_senders(prefer_key=prev_key)
         if self._rows:
             self._fetch_messages_for_cursor()
         self._set_status(
@@ -324,14 +329,22 @@ class TriageApp(App):
         )
         self._update_subtitle()
 
-    def _render_senders(self) -> None:
+    def _render_senders(self, prefer_key: str | None = None) -> None:
         table = self.query_one("#senders", DataTable)
         cursor = table.cursor_row or 0
         table.clear()
         for row in self._rows:
             table.add_row(*sender_cells(row, self._plan.get(row[1])))
         if self._rows:
-            table.move_cursor(row=min(cursor, len(self._rows) - 1))
+            # Prefer to restore the cursor onto the previously selected sender;
+            # if it's gone (e.g. it was just executed), clamp the old index.
+            target = cursor
+            if prefer_key is not None:
+                for i, row in enumerate(self._rows):
+                    if row[1] == prefer_key:
+                        target = i
+                        break
+            table.move_cursor(row=min(target, len(self._rows) - 1))
 
     def _show_messages(self, msgs: list[dict]) -> None:
         table = self.query_one("#messages", DataTable)
