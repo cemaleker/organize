@@ -31,6 +31,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Header, Input, Static
+from textual.worker import Worker, WorkerState
 
 from .config import Config
 from .events import STATE_RATE_LIMITED, SyncProgress
@@ -46,6 +47,11 @@ _MESSAGE_COLUMNS = ("date", "", "subject")
 
 # Categories that are inherently unsubscribe-able — drives the noise ranking.
 _UNSUB_CATEGORIES = frozenset({"newsletter", "mailing_list"})
+
+# Braille spinner frames shown next to the status line while a background
+# network operation (load / sync / execute / undo) is in flight.
+_SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+_SPINNER_INTERVAL = 0.08  # seconds per frame
 
 
 def _noise_key(row: tuple) -> tuple[int, int, int]:
@@ -198,6 +204,14 @@ class TriageApp(App):
         # Lets a long sync be interrupted on quit (the blocking Gmail client runs
         # in a thread that can't be force-killed).
         self._cancel_event = threading.Event()
+
+        # Animated activity indicator. `_busy` reflects whether a long-running
+        # worker is in flight; the timer advances the frame while it is.
+        self._status_text = ""          # status without the spinner prefix
+        self._status_error = False
+        self._busy = False
+        self._spinner_frame = 0
+        self._spinner_timer = None
 
     # -- layout --------------------------------------------------------------
 
@@ -361,10 +375,60 @@ class TriageApp(App):
         self._update_subtitle()
 
     def _set_status(self, text: str, error: bool = False) -> None:
-        self.last_status = text
+        self.last_status = text  # mirror of the *text*, sans spinner (for tests)
+        self._status_text = text
+        self._status_error = error
+        self._render_status()
+
+    def _render_status(self) -> None:
+        """Paint the status line, prefixing an animated frame while busy."""
         status = self.query_one("#status", Static)
-        status.set_class(error, "error")
-        status.update(text)
+        status.set_class(self._status_error, "error")
+        if self._busy:
+            frame = _SPINNER_FRAMES[self._spinner_frame % len(_SPINNER_FRAMES)]
+            status.update(f"{frame} {self._status_text}")
+        else:
+            status.update(self._status_text)
+
+    # -- activity indicator --------------------------------------------------
+
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        """Run the spinner whenever a long-running worker is in flight.
+
+        The per-cursor message fetch (``group="messages"``) is excluded so
+        navigating senders doesn't flicker the indicator; only the network-bound
+        load/sync/execute/undo workers drive it.
+        """
+        if event.worker.group == "messages":
+            return
+        if event.state == WorkerState.RUNNING:
+            self._start_spinner()
+        elif event.state in (
+            WorkerState.SUCCESS,
+            WorkerState.ERROR,
+            WorkerState.CANCELLED,
+        ):
+            self._stop_spinner()
+
+    def _start_spinner(self) -> None:
+        if self._busy:
+            return
+        self._busy = True
+        self._spinner_timer = self.set_interval(_SPINNER_INTERVAL, self._tick_spinner)
+        self._render_status()
+
+    def _tick_spinner(self) -> None:
+        self._spinner_frame += 1
+        self._render_status()
+
+    def _stop_spinner(self) -> None:
+        if not self._busy:
+            return
+        self._busy = False
+        if self._spinner_timer is not None:
+            self._spinner_timer.stop()
+            self._spinner_timer = None
+        self._render_status()
 
     def _update_subtitle(self) -> None:
         planned = sum(1 for p in self._plan.values() if p.kind != "keep")

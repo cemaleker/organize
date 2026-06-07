@@ -329,6 +329,57 @@ async def test_sync_action_without_service_reports(tmp_path):
         assert "no read service" in app.last_status
 
 
+async def test_activity_indicator_animates_while_busy_then_clears(tmp_path):
+    from inbox_cleaner.triage import _SPINNER_FRAMES
+
+    db = tmp_path / "t.sqlite"
+    _seed_store(db, "news@x.com", ["a"])
+    app = TriageApp(Config(db_path=db), service=None)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        await pilot.pause()
+
+        status = app.query_one("#status")
+        # Idle: the status line carries no spinner prefix, and last_status mirrors
+        # exactly what's painted.
+        assert not app._busy
+        assert str(status.render()) == app.last_status
+
+        # While busy a spinner frame is prefixed, but last_status stays clean so
+        # callers/tests still see just the message text.
+        app._start_spinner()
+        await pilot.pause()
+        rendered = str(status.render())
+        assert rendered.startswith(tuple(_SPINNER_FRAMES))
+        assert app.last_status in rendered
+        assert app.last_status == app._status_text
+
+        # Stopping clears the prefix again.
+        app._stop_spinner()
+        await pilot.pause()
+        assert str(app.query_one("#status").render()) == app.last_status
+
+
+async def test_activity_indicator_ignores_message_fetch_worker(tmp_path):
+    """Navigating senders (the ``messages`` group) must not trip the spinner."""
+    from types import SimpleNamespace
+
+    from inbox_cleaner.triage import WorkerState
+
+    db = tmp_path / "t.sqlite"
+    _seed_store(db, "news@x.com", ["a"])
+    app = TriageApp(Config(db_path=db), service=None)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        await pilot.pause()
+
+        event = SimpleNamespace(
+            worker=SimpleNamespace(group="messages"), state=WorkerState.RUNNING
+        )
+        app.on_worker_state_changed(event)  # type: ignore[arg-type]
+        assert not app._busy
+
+
 async def test_execute_without_plan_is_a_no_op(tmp_path):
     db = tmp_path / "t.sqlite"
     _seed_store(db, "news@x.com", ["a"])
