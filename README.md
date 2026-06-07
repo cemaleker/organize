@@ -103,4 +103,4 @@ event objects, and the formatting helpers are pure functions.
 
 ## License
 
-[MIT](LICENSE) © cemal
+[MIT](LICENSE) © Cemal Eker
