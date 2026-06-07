@@ -62,6 +62,7 @@ from .events import (
     SyncDone,
     SyncProgress,
 )
+from .retry import is_transient
 from .store import Store
 
 # History change types we care about for the incremental delta.
@@ -75,25 +76,6 @@ _MAX_BATCH = 1000
 # these by default, but a message trashed *after* it was indexed still needs to
 # be removed locally — so we drop any fetched message carrying one of these.
 _EXCLUDED_LABELS = frozenset({"TRASH", "SPAM"})
-
-# HTTP statuses that warrant a retry. 403 is only retried when the error reason
-# is a rate-limit one (checked separately) — a plain 403 is a real auth/scope
-# problem and must surface immediately.
-_RETRY_STATUSES = frozenset({429, 500, 502, 503})
-_RATE_LIMIT_REASONS = ("ratelimitexceeded", "userratelimitexceeded")
-
-
-def _is_rate_limit(exc: BaseException) -> bool:
-    """True if the exception is a transient Gmail rate-limit / server error."""
-    if not isinstance(exc, HttpError):
-        return False
-    status = getattr(getattr(exc, "resp", None), "status", None)
-    if status in _RETRY_STATUSES:
-        return True
-    if status == 403:
-        text = str(exc).lower()
-        return any(reason in text for reason in _RATE_LIMIT_REASONS)
-    return False
 
 
 def _error_reason(exc: BaseException) -> str:
@@ -213,7 +195,7 @@ class SyncEngine:
     def _execute(self, fn: Callable[[], Any]) -> Any:
         """Run a network call with rate-limit-aware exponential backoff."""
         retrying = Retrying(
-            retry=retry_if_exception(_is_rate_limit),
+            retry=retry_if_exception(is_transient),
             wait=wait_exponential(multiplier=1, max=60),
             stop=stop_after_attempt(self.max_attempts),
             # _sleep may be Event.wait (returns bool); tenacity ignores the
@@ -432,9 +414,9 @@ class SyncEngine:
             batch_msgs, failures = self._run_batch(pending)
             messages.extend(batch_msgs)
 
-            retry = [mid for mid, exc in failures.items() if _is_rate_limit(exc)]
+            retry = [mid for mid, exc in failures.items() if is_transient(exc)]
             for mid, exc in failures.items():
-                if not _is_rate_limit(exc):
+                if not is_transient(exc):
                     errors += 1
                     self.error_reasons[_error_reason(exc)] += 1
 

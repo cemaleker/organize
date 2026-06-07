@@ -60,6 +60,10 @@ class _ListRequest:
         token = self._kwargs.get("pageToken")
         if token in self._service.fail_list_tokens:
             raise http_error(429, "rateLimitExceeded")
+        # Queue of arbitrary exceptions (e.g. transport errors) to raise on the
+        # list call, one popped per call.
+        if self._service.list_raises:
+            raise self._service.list_raises.pop(0)
         if self._service.list_failures > 0:
             self._service.list_failures -= 1
             raise http_error(429, "rateLimitExceeded")
@@ -90,6 +94,11 @@ class _SimpleRequest:
         # (e.g. "modify"), so executor backoff can be exercised.
         if self._record is not None:
             kind = self._record[0]
+            # Inject arbitrary exceptions (e.g. a ConnectionResetError) per call
+            # kind — one popped per call — to exercise transport-error handling.
+            queue = self._service.call_raises.get(kind)
+            if queue:
+                raise queue.pop(0)
             if self._service.call_failures.get(kind, 0) > 0:
                 self._service.call_failures[kind] -= 1
                 raise http_error(429, "rateLimitExceeded")
@@ -224,6 +233,9 @@ class FakeService:
         self.list_failures = 0
         self.batch_failures = 0
         self.profile_failures = 0
+        # Queue of arbitrary exceptions to raise on the list call (one per call),
+        # for injecting non-HttpError transport failures into the sync path.
+        self.list_raises: list[BaseException] = []
         # Per-member transient failures: msg_id -> times to fail with 429 before
         # the message's sub-request succeeds. Exercises in-batch retry.
         self.member_failures: dict = {}
@@ -242,6 +254,9 @@ class FakeService:
         self.deleted_filters: list[str] = []
         self.calls: list[tuple] = []
         self.call_failures: dict[str, int] = {}
+        # Per call-kind queue of exceptions to raise (one popped per call),
+        # for injecting non-HttpError transport failures.
+        self.call_raises: dict[str, list[BaseException]] = {}
 
     def users(self):
         return _Users(self)

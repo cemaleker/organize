@@ -182,3 +182,36 @@ def test_rate_limit_is_retried(store, service):
 
     assert res.error is None
     assert res.modified == 1
+
+
+def test_connection_reset_is_retried(store, service):
+    # A transient transport error (not an HttpError) recovers via backoff
+    # instead of crashing the caller.
+    _seed(store, "news@x.com", ["a"], from_addr="news@x.com")
+    service.call_raises["modify"] = [
+        ConnectionResetError(104, "Connection reset by peer")
+    ]
+    ex = Executor(service, store, sleep=lambda _s: None)
+
+    res = ex.apply(Action(group_key="news@x.com", kind="archive", create_filter=False))
+
+    assert res.error is None
+    assert res.modified == 1
+
+
+def test_persistent_connection_reset_is_recorded_not_raised(store, service):
+    # If the transport error never clears, the action surfaces as a recorded
+    # error rather than propagating out of apply() (which would crash the TUI's
+    # thread worker). The action stays in the log so it remains undoable.
+    _seed(store, "news@x.com", ["a"], from_addr="news@x.com")
+    service.call_raises["modify"] = [
+        ConnectionResetError(104, "Connection reset by peer") for _ in range(20)
+    ]
+    ex = Executor(service, store, max_attempts=3, sleep=lambda _s: None)
+
+    res = ex.apply(Action(group_key="news@x.com", kind="archive", create_filter=False))
+
+    assert res.modified == 0
+    assert res.error is not None
+    assert "Connection reset by peer" in res.error
+    assert len(store.recent_actions()) == 1

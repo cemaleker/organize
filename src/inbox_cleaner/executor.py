@@ -38,6 +38,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from .retry import TRANSIENT_NETWORK_ERRORS, is_transient
 from .store import Store
 
 # Gmail caps messages.batchModify at 1000 ids per request.
@@ -46,21 +47,10 @@ _MAX_MODIFY = 1000
 # Valid triage actions. "keep" is a no-op the caller filters out before applying.
 ACTIONS = ("trash", "archive", "label", "keep")
 
-# HTTP statuses worth retrying; 403 only when it's a rate-limit reason.
-_RETRY_STATUSES = frozenset({429, 500, 502, 503})
-_RATE_LIMIT_REASONS = ("ratelimitexceeded", "userratelimitexceeded")
-
-
-def _is_rate_limit(exc: BaseException) -> bool:
-    """True if the exception is a transient Gmail rate-limit / server error."""
-    if not isinstance(exc, HttpError):
-        return False
-    status = getattr(getattr(exc, "resp", None), "status", None)
-    if status in _RETRY_STATUSES:
-        return True
-    if status == 403:
-        return any(reason in str(exc).lower() for reason in _RATE_LIMIT_REASONS)
-    return False
+# A failed action is recorded (result.error) rather than raised; this is the set
+# of exceptions treated as such — Gmail HTTP errors and transient transport
+# failures that survived the backoff. Anything else is a real bug and propagates.
+_RECORDABLE_ERRORS: tuple[type[BaseException], ...] = (HttpError, *TRANSIENT_NETWORK_ERRORS)
 
 
 @dataclass(slots=True)
@@ -170,7 +160,7 @@ class Executor:
     def _execute(self, fn: Callable[[], Any]) -> Any:
         """Run a network call with rate-limit-aware exponential backoff."""
         kwargs: dict[str, Any] = {
-            "retry": retry_if_exception(_is_rate_limit),
+            "retry": retry_if_exception(is_transient),
             "wait": wait_exponential(multiplier=1, max=60),
             "stop": stop_after_attempt(self.max_attempts),
             "reraise": True,
@@ -246,7 +236,7 @@ class Executor:
                 if result.filter_id:
                     prior_state["filter_id"] = result.filter_id
                     self.store.update_action_state(action_id, prior_state)
-        except HttpError as exc:
+        except _RECORDABLE_ERRORS as exc:
             result.error = _describe(exc)
         return result
 
@@ -327,7 +317,7 @@ class Executor:
             if filter_id:
                 self._delete_filter(filter_id)
             self.store.delete_action(int(logged["id"]))
-        except HttpError as exc:
+        except _RECORDABLE_ERRORS as exc:
             result.error = _describe(exc)
         return result
 
@@ -346,7 +336,11 @@ class Executor:
         )
 
 
-def _describe(exc: HttpError) -> str:
-    """Short, human-readable description of a failed Gmail call."""
+def _describe(exc: BaseException) -> str:
+    """Short, human-readable description of a failed Gmail call.
+
+    Handles both ``HttpError`` (carries an HTTP status) and bare transport
+    errors like ``ConnectionResetError`` (no status — just the message).
+    """
     status = getattr(getattr(exc, "resp", None), "status", None)
     return f"{status} {exc}" if status else str(exc)

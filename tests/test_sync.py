@@ -107,6 +107,21 @@ def test_rate_limit_is_retried_and_emitted(store):
     )
 
 
+def test_connection_reset_on_list_is_retried(store):
+    # A transport error (not an HttpError) on a list page recovers via backoff
+    # instead of escaping the sync engine.
+    svc = _two_page_service()
+    svc.list_raises = [ConnectionResetError(104, "Connection reset by peer")]
+    events = []
+    done = SyncEngine(svc, store, emit=events.append, sleep=_no_sleep).backfill()
+
+    assert done.fetched == 4
+    assert done.errors == 0
+    assert any(
+        isinstance(e, SyncProgress) and e.state == STATE_RATE_LIMITED for e in events
+    )
+
+
 def test_batch_member_errors_are_counted(store):
     # m2 has no fixture -> the batch reports a per-message 404.
     svc = FakeService(
