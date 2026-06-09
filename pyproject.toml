@@ -1,6 +1,6 @@
 [project]
 name = "inbox-cleaner"
-version = "0.1.0b3"
+version = "0.1.0"
 description = "Fetch, index, group, filter, and safely clean a neglected Gmail inbox."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -9,7 +9,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "cemal", email = "cemaleker@pm.me" }]
 keywords = ["gmail", "email", "inbox", "cli", "tui", "cleanup"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: End Users/Desktop",
     "Programming Language :: Python :: 3 :: Only",
