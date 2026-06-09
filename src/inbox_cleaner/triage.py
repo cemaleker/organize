@@ -3,7 +3,7 @@
 A two-pane Textual app for clearing a backlog fast, without ever searching
 Gmail by hand:
 
-- **Left pane:** sender groups ranked noise-first (the same ``group_counts``
+- **Left pane:** sender groups ranked highest-volume first (the ``group_counts``
   aggregation the ``stats`` command uses), each carrying a *planned* action you
   set with a keypress.
 - **Right pane:** the highlighted sender's actual messages, read straight from
@@ -55,14 +55,17 @@ _SPINNER_INTERVAL = 0.08  # seconds per frame
 
 
 def _noise_key(row: tuple) -> tuple[int, int, int]:
-    """Rank likely-noise groups first: unsubscribable, then unread, then volume.
+    """Rank the biggest bulk-cleaning wins first: volume, then unread, then unsub.
 
-    Mirrors the CLI's ``--noise`` order (``unsub DESC, unread DESC, total DESC``);
-    ``unsub`` is derived from the category. Rows are
+    A group is worth triaging in proportion to how much mail one keypress clears,
+    so total **volume dominates**; unread (clutter you've never opened) and unsub
+    (filterable forever) only break ties. This deliberately differs from the CLI's
+    ``--noise`` order — there, category leads, which buries a 700-message sender
+    under every one-message mailing list. Rows are
     ``(category, group_key, total, unread, oldest, newest)``.
     """
     unsub = 1 if row[0] in _UNSUB_CATEGORIES else 0
-    return (unsub, row[3] or 0, row[2] or 0)
+    return (row[2] or 0, row[3] or 0, unsub)
 
 
 def _fmt_date(ms: int | None) -> str:
@@ -93,7 +96,7 @@ class _Planned:
 
 
 def triage_view(rows: list[tuple], limit: int | None = None) -> list[tuple]:
-    """Rank group rows for triage (noise first) and cap to ``limit`` — pure.
+    """Rank group rows for triage (highest volume first) and cap to ``limit`` — pure.
 
     Rows are ``(category, group_key, total, unread, oldest, newest)``, the shape
     :meth:`Store.group_counts` returns.

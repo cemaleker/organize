@@ -49,10 +49,11 @@ _ROWS = [
 # -- pure helpers -----------------------------------------------------------
 
 
-def test_triage_view_ranks_noise_first_and_limits():
+def test_triage_view_ranks_volume_first_and_limits():
     out = triage_view(_ROWS)
-    # newsletters (unsubscribable) above personal; within, more unread first.
-    assert [r[1] for r in out] == ["c.com", "a.com", "b.com"]
+    # Highest volume first (the biggest bulk-cleaning win), regardless of
+    # category: b.com (30) > a.com (10) > c.com (5).
+    assert [r[1] for r in out] == ["b.com", "a.com", "c.com"]
     assert triage_view(_ROWS, limit=2) == out[:2]
 
 
@@ -164,7 +165,7 @@ async def test_execute_keeps_cursor_on_surviving_selected_sender(tmp_path):
     # above it drops those rows so "mid" shifts up. The cursor must follow "mid",
     # not stay at its old row index (which now points at a different sender).
     db = tmp_path / "t.sqlite"
-    # unread count drives newsletter ranking, so order is top > mid > bottom.
+    # volume drives ranking, so order is top (3) > mid (2) > bottom (1).
     _seed_store(db, "top.com", ["t1", "t2", "t3"], from_addr="n@top.com")
     _seed_store(db, "mid.com", ["m1", "m2"], from_addr="n@mid.com")
     _seed_store(db, "bot.com", ["b1"], from_addr="n@bot.com")
