@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.coordinate import Coordinate
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Header, Input, Static
 from textual.worker import Worker, WorkerState
@@ -363,6 +364,19 @@ class TriageApp(App):
                         break
             table.move_cursor(row=min(target, len(self._rows) - 1))
 
+    def _update_sender_row(self, row_index: int) -> None:
+        """Repaint one sender row in place after its planned action changes.
+
+        Marking a sender only alters its own action/filter cells, so we update
+        those cells rather than clearing and rebuilding the whole table — a full
+        rebuild flickers the pane and snaps the scroll to keep the cursor in
+        view. Updating in place leaves the cursor and scroll position untouched.
+        """
+        table = self.query_one("#senders", DataTable)
+        row = self._rows[row_index]
+        for col, value in enumerate(sender_cells(row, self._plan.get(row[1]))):
+            table.update_cell_at(Coordinate(row_index, col), value)
+
     def _show_messages(self, msgs: list[dict]) -> None:
         table = self.query_one("#messages", DataTable)
         table.clear()
@@ -441,11 +455,21 @@ class TriageApp(App):
     # -- selection -> right pane --------------------------------------------
 
     def _current_row(self) -> tuple | None:
+        idx = self._current_index()
+        return self._rows[idx] if idx is not None else None
+
+    def _current_index(self) -> int | None:
         table = self.query_one("#senders", DataTable)
         idx = table.cursor_row
         if idx is None or not (0 <= idx < len(self._rows)):
             return None
-        return self._rows[idx]
+        return idx
+
+    def _index_of(self, group_key: str) -> int | None:
+        for i, row in enumerate(self._rows):
+            if row[1] == group_key:
+                return i
+        return None
 
     def _fetch_messages_for_cursor(self) -> None:
         row = self._current_row()
@@ -465,10 +489,10 @@ class TriageApp(App):
     # -- actions (key bindings) ---------------------------------------------
 
     def action_plan(self, kind: str) -> None:
-        row = self._current_row()
-        if row is None:
+        idx = self._current_index()
+        if idx is None:
             return
-        group_key = row[1]
+        group_key = self._rows[idx][1]
         if kind == "keep":
             self._plan.pop(group_key, None)
         else:
@@ -477,39 +501,44 @@ class TriageApp(App):
             self._plan[group_key] = _Planned(
                 kind=kind, create_filter=(kind != "trash")
             )
-        self._render_senders()
+        self._update_sender_row(idx)
         self._update_subtitle()
 
     def action_plan_label(self) -> None:
-        row = self._current_row()
-        if row is None:
+        idx = self._current_index()
+        if idx is None:
             return
-        group_key = row[1]
+        group_key = self._rows[idx][1]
 
         def _done(name: str | None) -> None:
             if name:
                 self._plan[group_key] = _Planned(
                     kind="label", label_name=name, create_filter=True
                 )
-                self._render_senders()
+                # The selected sender may have moved while the modal was open;
+                # find its current row before repainting it in place.
+                row_idx = self._index_of(group_key)
+                if row_idx is not None:
+                    self._update_sender_row(row_idx)
                 self._update_subtitle()
 
         self.push_screen(_LabelPrompt(), _done)
 
     def action_toggle_filter(self) -> None:
-        row = self._current_row()
-        if row is None:
+        idx = self._current_index()
+        if idx is None:
             return
-        planned = self._plan.get(row[1])
+        group_key = self._rows[idx][1]
+        planned = self._plan.get(group_key)
         if planned is None or planned.kind == "keep":
             # Nothing to attach a filter to yet — tell the user instead of
             # silently doing nothing.
             self._set_status("choose an action first (t / a / l), then f toggles its filter")
             return
         planned.create_filter = not planned.create_filter
-        self._render_senders()
+        self._update_sender_row(idx)
         state = "on" if planned.create_filter else "off"
-        self._set_status(f"future-mail filter {state} for {row[1]}")
+        self._set_status(f"future-mail filter {state} for {group_key}")
 
     def _build_actions(self) -> list[Action]:
         by_key = {r[1]: r for r in self._rows}
